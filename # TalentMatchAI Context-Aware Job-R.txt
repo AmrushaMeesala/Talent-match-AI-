@@ -1,0 +1,127 @@
+# TalentMatchAI: Context-Aware Job-Resume Classification using LLMs
+# Author: Neha
+# Dependencies: pandas, numpy, scikit-learn, torch, transformers, streamlit
+
+import pandas as pd
+import numpy as np
+import torch
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from transformers import AutoTokenizer, AutoModel
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics.pairwise import cosine_similarity
+import streamlit as st
+
+# -------------------------------
+# 1. Simulated Dataset
+# -------------------------------
+# Resume dataset
+resumes = [
+    {"text": "Experienced backend engineer with 3 years Python and Django", "category": "Backend"},
+    {"text": "Frontend developer skilled in React and JavaScript", "category": "Frontend"},
+    {"text": "Data scientist with Python, Pandas, and machine learning experience", "category": "Data Science"},
+    {"text": "Fullstack developer experienced in Node.js, React, and SQL", "category": "Fullstack"},
+    {"text": "Backend developer with Flask, REST APIs, and cloud deployment", "category": "Backend"},
+    {"text": "Frontend engineer with Angular and CSS expertise", "category": "Frontend"},
+    {"text": "Machine learning engineer with Python and deep learning", "category": "Data Science"},
+    {"text": "Fullstack engineer with MERN stack and RESTful APIs", "category": "Fullstack"},
+]
+
+# Job description dataset
+jobs = [
+    {"text": "Backend developer required with Python and Django experience", "category": "Backend"},
+    {"text": "Looking for frontend developer skilled in React", "category": "Frontend"},
+    {"text": "Data scientist needed with machine learning and Python skills", "category": "Data Science"},
+    {"text": "Hiring fullstack developer with Node.js and React knowledge", "category": "Fullstack"},
+]
+
+# Convert to DataFrames
+df_resumes = pd.DataFrame(resumes)
+df_jobs = pd.DataFrame(jobs)
+
+# -------------------------------
+# 2. Text Preprocessing
+# -------------------------------
+def preprocess(text):
+    text = text.lower()
+    text = ''.join([c for c in text if c.isalnum() or c.isspace()])  # remove punctuation
+    return text
+
+df_resumes['text_clean'] = df_resumes['text'].apply(preprocess)
+df_jobs['text_clean'] = df_jobs['text'].apply(preprocess)
+
+# -------------------------------
+# 3. LLM Embeddings
+# -------------------------------
+# Using BERT base model from HuggingFace
+MODEL_NAME = "bert-base-uncased"
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+model = AutoModel.from_pretrained(MODEL_NAME)
+
+# Function to get embeddings
+def get_embedding(text):
+    inputs = tokenizer(text, return_tensors='pt', truncation=True, padding=True)
+    with torch.no_grad():
+        outputs = model(**inputs)
+    # Use [CLS] token embedding
+    return outputs.last_hidden_state[:, 0, :].numpy()[0]
+
+# Generate embeddings
+df_resumes['embedding'] = df_resumes['text_clean'].apply(get_embedding)
+df_jobs['embedding'] = df_jobs['text_clean'].apply(get_embedding)
+
+# -------------------------------
+# 4. Classification Layer (Optional)
+# -------------------------------
+# Encode categories
+le = LabelEncoder()
+y = le.fit_transform(df_resumes['category'])
+
+# Prepare features
+X = np.stack(df_resumes['embedding'].values)
+
+# Train a simple classifier (Logistic Regression) on resume embeddings
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+clf = LogisticRegression(max_iter=1000)
+clf.fit(X_train, y_train)
+y_pred = clf.predict(X_test)
+
+# Evaluation
+print("Classification Metrics:")
+print("Accuracy:", accuracy_score(y_test, y_pred))
+print("Precision:", precision_score(y_test, y_pred, average='weighted'))
+print("Recall:", recall_score(y_test, y_pred, average='weighted'))
+print("F1 Score:", f1_score(y_test, y_pred, average='weighted'))
+
+# -------------------------------
+# 5. Semantic Matching
+# -------------------------------
+def match_candidates(job_embedding, resume_embeddings, resumes_df):
+    sims = cosine_similarity([job_embedding], np.stack(resume_embeddings))[0]
+    results = pd.DataFrame({
+        'Candidate': resumes_df['text'],
+        'Category': resumes_df['category'],
+        'Similarity': sims
+    })
+    results = results.sort_values(by='Similarity', ascending=False).reset_index(drop=True)
+    return results
+
+# Example: Match candidates for first job
+job_example = df_jobs.iloc[0]  # Backend developer
+matching_result = match_candidates(job_example['embedding'], df_resumes['embedding'], df_resumes)
+print("\nTop Matches for Job:", job_example['text'])
+print(matching_result.head())
+
+# -------------------------------
+# 6. Streamlit Web App
+# -------------------------------
+st.title("TalentMatchAI: Job-Resume Semantic Matching")
+
+job_input = st.text_area("Enter Job Description:")
+if st.button("Find Top Candidates"):
+    if job_input.strip() != "":
+        job_embed = get_embedding(preprocess(job_input))
+        result_df = match_candidates(job_embed, df_resumes['embedding'], df_resumes)
+        st.write("Top Candidates:")
+        st.dataframe(result_df)
