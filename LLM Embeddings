@@ -1,0 +1,89 @@
+# ============================================================
+# Step 3: LLM Embedding Generation
+# Use BERT to generate embeddings for resumes & jobs
+# ============================================================
+
+import torch
+from transformers import AutoTokenizer, AutoModel
+import numpy as np
+
+# Set device (GPU if available)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f"Using device: {device}")
+
+# Load pre-trained BERT model and tokenizer
+MODEL_NAME = 'bert-base-uncased'
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+model = AutoModel.from_pretrained(MODEL_NAME).to(device)
+model.eval()  # Set to evaluation mode
+
+def get_embeddings(texts, batch_size=8):
+    """
+    Generate BERT embeddings for a list of texts.
+    Uses mean pooling over token embeddings (excluding padding).
+    
+    Args:
+        texts: List of strings
+        batch_size: Number of texts to process at once
+    
+    Returns:
+        numpy array of shape (len(texts), hidden_size)
+    """
+    all_embeddings = []
+    
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i:i+batch_size]
+        
+        # Tokenize the batch
+        encoded = tokenizer(
+            batch,
+            padding=True,
+            truncation=True,
+            max_length=128,
+            return_tensors='pt'
+        ).to(device)
+        
+        # Generate embeddings (no gradient computation needed)
+        with torch.no_grad():
+            outputs = model(**encoded)
+        
+        # Mean pooling: average token embeddings, ignoring padding
+        attention_mask = encoded['attention_mask'].unsqueeze(-1)
+        token_embeddings = outputs.last_hidden_state
+        
+        # Masked mean: sum embeddings * mask, divide by mask sum
+        summed = (token_embeddings * attention_mask).sum(dim=1)
+        counts = attention_mask.sum(dim=1).clamp(min=1)
+        mean_pooled = summed / counts
+        
+        all_embeddings.append(mean_pooled.cpu().numpy())
+    
+    return np.vstack(all_embeddings)
+
+# Generate embeddings for resumes
+print("Generating resume embeddings...")
+resume_texts = resumes_df['clean_text'].tolist()
+resume_embeddings = get_embeddings(resume_texts)
+print(f"Resume embeddings shape: {resume_embeddings.shape}")
+
+# Generate embeddings for job descriptions
+print("Generating job description embeddings...")
+job_texts = jobs_df['clean_text'].tolist()
+job_embeddings = get_embeddings(job_texts)
+print(f"Job embeddings shape: {job_embeddings.shape}")
+
+# Save embeddings for later use
+np.save('resume_embeddings.npy', resume_embeddings)
+np.save('job_embeddings.npy', job_embeddings)
+print("\nEmbeddings saved successfully!")
+
+# Quick sanity check: embeddings of same category should be more similar
+from sklearn.metrics.pairwise import cosine_similarity
+
+sim_matrix = cosine_similarity(resume_embeddings[:4], job_embeddings)
+print("\n=== Similarity Matrix (first 4 resumes vs 4 jobs) ===")
+print("       Backend  Frontend  DataSci  Fullstack")
+for i, row in enumerate(sim_matrix):
+    cats = resumes_df['category'].iloc[i]
+    scores = '  '.join([f"{s:.3f}" for s in row])
+    print(f"R{i+1} ({cats:20s}): {scores}")
