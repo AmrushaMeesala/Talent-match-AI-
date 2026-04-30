@@ -1,5 +1,5 @@
 # TalentMatchAI: Context-Aware Job-Resume Classification using LLMs
-# Author: Neha
+# Author: Amrusha
 # Dependencies: pandas, numpy, scikit-learn, torch, transformers, streamlit
 
 import pandas as pd
